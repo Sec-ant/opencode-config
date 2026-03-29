@@ -20,8 +20,7 @@
   "provider": {
     "github-copilot": {
       "options": {
-        "timeout": 1800000,
-        "chunkTimeout": 120000
+        "timeout": 1800000
       },
       "models": {
         "claude-opus-4.6": {
