@@ -1,5 +1,5 @@
 ---
-description: Worker subagent (GPT-5.4 mini)
+description: Worker subagent (GPT-5.4 Mini)
 mode: subagent
 model: github-copilot/gpt-5.4-mini
 steps: 100

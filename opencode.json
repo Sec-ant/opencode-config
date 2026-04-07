@@ -166,23 +166,14 @@
     "chrome-devtools": {
       "type": "local",
       "command": [
-        "npx",
-        "-y",
-        "chrome-devtools-mcp@latest",
-        "--no-usage-statistics",
-        "--executablePath",
-        "/Applications/Chromium.app/Contents/MacOS/Chromium",
-        "--ignoreDefaultChromeArg=--disable-extensions",
-        "--chromeArg=--disable-extensions-except=/Users/bytedance/.config/opencode/ublock-origin/uBlock0.chromium",
-        "--chromeArg=--load-extension=/Users/bytedance/.config/opencode/ublock-origin/uBlock0.chromium",
-        "--chromeArg=--headless=new"
+        "bash",
+        "/home/secant/.config/opencode/chrome-mcp-wrapper.sh"
       ]
     }
   },
   "plugin": [
-    "opencode-handoff",
+    "opencode-handoff@0.5.0",
     "./plugins/angstrom-levy",
-    "./plugins/copilot-stats",
     "./plugins/session-helper",
     "./plugins/worker-generator"
   ]
