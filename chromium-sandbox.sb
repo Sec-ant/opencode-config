@@ -1,0 +1,14 @@
+;; Allow reading ungoogled-chromium app bundle
+;; (not covered by safehouse's built-in chromium-full profile which only allows Google Chrome)
+(allow file-read*
+    (subpath "/Applications/Chromium.app")
+    (subpath "/System/Volumes/Data/Applications/Chromium.app"))
+
+;; Allow mapping Chromium framework as executable (needed for dlopen)
+(allow file-map-executable
+    (subpath "/Applications/Chromium.app")
+    (subpath "/System/Volumes/Data/Applications/Chromium.app"))
+
+;; Allow Chromium to write its user data (profile, caches, etc.)
+(allow file-read* file-write*
+    (home-subpath "/Library/Application Support/Chromium"))

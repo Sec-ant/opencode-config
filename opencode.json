@@ -31,8 +31,18 @@
     "chrome-devtools": {
       "type": "local",
       "command": [
-        "bash",
-        "/home/secant/.config/opencode/chrome-mcp-wrapper.sh"
+        "npx",
+        "-y",
+        "chrome-devtools-mcp@0.21.0",
+        "--no-usage-statistics",
+        "--executablePath",
+        "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        "--ignoreDefaultChromeArg=--disable-extensions",
+        "--chromeArg=--disable-extensions-except=/Users/bytedance/.config/opencode/ublock-origin/uBlock0.chromium,/Users/bytedance/.config/opencode/meow-header",
+        "--chromeArg=--load-extension=/Users/bytedance/.config/opencode/ublock-origin/uBlock0.chromium,/Users/bytedance/.config/opencode/meow-header",
+        "--chromeArg=--headless=new",
+        "--chromeArg=--no-sandbox",
+        "--chromeArg=--user-data-dir=/Users/bytedance/.config/opencode/chromium-mcp"
       ]
     }
   },
