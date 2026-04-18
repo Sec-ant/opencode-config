@@ -4,6 +4,7 @@ mode: primary
 model: github-copilot/gpt-5-mini
 temperature: 0.3
 steps: 3
+single_task: true
 tools:
   task: true
   read: false
