@@ -191,24 +191,34 @@ interface ModelInfo {
 interface AgentParams {
   steps: number;
   temperature?: number;
-  thinking_budget?: number;
-  reasoningEffort?: string;
+  variant?: string;
 }
 
 function deriveAgentParams(model: ModelInfo): AgentParams {
   const { id } = model;
   const isLightweight = /-(mini|flash|haiku)(-|$)/i.test(id);
 
+  if (!model.reasoning) {
+    return {
+      steps: isLightweight ? 100 : 200,
+      temperature: model.temperature ? 0.2 : undefined,
+    };
+  }
+
+  // All reasoning models use variant — opencode's variant system translates
+  // to the correct provider options (reasoningEffort, reasoningSummary, etc.)
+  const isHighEnd =
+    /5\.[23]-codex/.test(id) || /gpt-5\.[2-9]/.test(id);
+  const variant = id.startsWith("claude")
+    ? "high"   // Claude via Copilot: max is high (low/medium/high)
+    : isHighEnd
+      ? "xhigh" // GPT codex 5.2/5.3, GPT-5.2+: supports xhigh
+      : "high";  // Other GPT reasoning models
+
   return {
     steps: isLightweight ? 100 : 200,
     temperature: model.temperature ? 0.2 : undefined,
-    // Claude → extended thinking
-    thinking_budget: id.startsWith("claude") ? 4000 : undefined,
-    // GPT reasoning (non-lightweight) → reasoningEffort
-    reasoningEffort:
-      model.reasoning && id.startsWith("gpt") && !isLightweight
-        ? "high"
-        : undefined,
+    variant,
   };
 }
 
@@ -228,10 +238,7 @@ function generateAgent(model: ModelInfo): string {
 
   if (p.temperature !== undefined) lines.push(`temperature: ${p.temperature}`);
   lines.push(`steps: ${p.steps}`);
-  if (p.thinking_budget !== undefined)
-    lines.push(`thinking_budget: ${p.thinking_budget}`);
-  if (p.reasoningEffort !== undefined)
-    lines.push(`reasoningEffort: ${p.reasoningEffort}`);
+  if (p.variant !== undefined) lines.push(`variant: ${p.variant}`);
 
   lines.push(
     "permission:",

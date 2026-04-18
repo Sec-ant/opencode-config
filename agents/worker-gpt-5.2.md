@@ -3,7 +3,7 @@ description: Worker subagent (GPT-5.2)
 mode: subagent
 model: github-copilot/gpt-5.2
 steps: 200
-reasoningEffort: high
+variant: xhigh
 permission:
   task:
     "*": deny

@@ -4,6 +4,7 @@ mode: subagent
 model: github-copilot/grok-code-fast-1
 temperature: 0.2
 steps: 200
+variant: high
 permission:
   task:
     "*": deny

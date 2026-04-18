@@ -3,7 +3,7 @@ description: Worker subagent (GPT-5.3-Codex)
 mode: subagent
 model: github-copilot/gpt-5.3-codex
 steps: 200
-reasoningEffort: high
+variant: xhigh
 permission:
   task:
     "*": deny

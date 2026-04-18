@@ -4,6 +4,7 @@ mode: subagent
 model: github-copilot/gpt-5-mini
 temperature: 0.2
 steps: 100
+variant: high
 permission:
   task:
     "*": deny

@@ -4,6 +4,7 @@ mode: subagent
 model: github-copilot/gemini-3-flash-preview
 temperature: 0.2
 steps: 100
+variant: high
 permission:
   task:
     "*": deny
