@@ -37,7 +37,6 @@
     }
   },
   "plugin": [
-    "opencode-handoff@0.5.0",
     "./plugins/angstrom-levy",
     "./plugins/session-helper",
     "./plugins/worker-generator"
