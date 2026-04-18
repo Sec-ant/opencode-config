@@ -44,8 +44,6 @@ const SKIP_MODELS = new Set<string>(
     .filter(Boolean),
 );
 
-
-
 // ---------------------------------------------------------------------------
 // Copilot API: auth & model fetching
 // ---------------------------------------------------------------------------
@@ -129,36 +127,14 @@ async function fetchCopilotModels(
 }
 
 // ---------------------------------------------------------------------------
-// Model classification & parameter derivation
+// Model info
 // ---------------------------------------------------------------------------
 
 interface ModelInfo {
   id: string;
   name: string;
-  reasoning: boolean;
-  temperature: boolean;
-  /** Sorted reasoning effort variants from the Copilot API's
-   *  reasoning_effort field.  Empty for non-reasoning models. */
+  /** Reasoning effort variants from the Copilot API. Empty for non-reasoning models. */
   variants: string[];
-}
-
-interface AgentParams {
-  steps: number;
-  temperature?: number;
-  variant?: string;
-}
-
-/**
- * Derive agent parameters for a model at a specific variant.
- * If variant is undefined the model is non-reasoning (no variant field emitted).
- */
-function deriveAgentParams(model: ModelInfo, variant?: string): AgentParams {
-  const isLightweight = /-(mini|flash|haiku)(-|$)/i.test(model.id);
-  return {
-    steps: isLightweight ? 100 : 200,
-    temperature: model.temperature ? 0.2 : undefined,
-    variant,
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -166,19 +142,16 @@ function deriveAgentParams(model: ModelInfo, variant?: string): AgentParams {
 // ---------------------------------------------------------------------------
 
 function generateAgent(model: ModelInfo, variant?: string): string {
-  const p = deriveAgentParams(model, variant);
-
   const variantLabel = variant ? ` [${variant}]` : "";
   const lines: string[] = [
     "---",
     `description: Worker subagent (${model.name}${variantLabel})`,
     "mode: subagent",
     `model: ${PROVIDER_ID}/${model.id}`,
+    "steps: 200",
   ];
 
-  if (p.temperature !== undefined) lines.push(`temperature: ${p.temperature}`);
-  lines.push(`steps: ${p.steps}`);
-  if (p.variant !== undefined) lines.push(`variant: ${p.variant}`);
+  if (variant !== undefined) lines.push(`variant: ${variant}`);
 
   // Variant workers can spawn any variant of the same model.
   // Non-reasoning workers can only spawn themselves.
@@ -210,10 +183,7 @@ function generateAgent(model: ModelInfo, variant?: string): string {
   return lines.join("\n") + "\n";
 }
 
-function generateCommand(
-  displayName: string,
-  targetWorker: string,
-): string {
+function generateCommand(displayName: string, targetWorker: string): string {
   return (
     [
       "---",
@@ -279,17 +249,13 @@ const plugin: Plugin = async ({ client }) => ({
       try {
         copilotModels = await fetchCopilotModels(token);
       } catch (err: any) {
-        throw new Error(
-          `Copilot API fetch failed: ${err?.message}`,
-        );
+        throw new Error(`Copilot API fetch failed: ${err?.message}`);
       }
 
       // ── Phase 3: Build merged model list ──
       // Intersect providers() with Copilot API — models absent from the API
-      // are likely decommissioned.  Variants come from two API fields:
-      //   - reasoning_effort[]  → effort levels (low/medium/high/xhigh)
-      //   - adaptive_thinking   → if true, append "max" (Anthropic adaptive
-      //                           thinking maximum budget, not in reasoning_effort)
+      // are likely decommissioned.  Variants come from the API's
+      // reasoning_effort[] field (e.g. ["low","medium","high"]).
       const models = new Map<string, ModelInfo>();
       for (const [id, raw] of Object.entries(provider.models) as [
         string,
@@ -304,10 +270,6 @@ const plugin: Plugin = async ({ client }) => ({
         models.set(id, {
           id,
           name: raw.name || id,
-          reasoning:
-            raw.capabilities?.reasoning ?? raw.reasoning ?? false,
-          temperature:
-            raw.capabilities?.temperature ?? raw.temperature ?? true,
           variants,
         });
       }
@@ -361,11 +323,7 @@ const plugin: Plugin = async ({ client }) => ({
             generatedAgents.add(name);
             generatedCommands.add(name);
 
-            await writeWorker(
-              AGENTS_DIR,
-              name,
-              generateAgent(model, variant),
-            );
+            await writeWorker(AGENTS_DIR, name, generateAgent(model, variant));
             await writeWorker(
               COMMANDS_DIR,
               name,
@@ -399,9 +357,7 @@ const plugin: Plugin = async ({ client }) => ({
       for (const name of await listExistingWorkers(COMMANDS_DIR)) {
         if (!generatedCommands.has(name)) {
           removed++;
-          await unlink(join(COMMANDS_DIR, `worker-${name}.md`)).catch(
-            () => {},
-          );
+          await unlink(join(COMMANDS_DIR, `worker-${name}.md`)).catch(() => {});
         }
       }
 
