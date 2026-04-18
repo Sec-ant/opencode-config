@@ -4,17 +4,12 @@
 // Registers the /update-workers command which:
 //   1. Queries OpenCode for the github-copilot provider's resolved model list
 //      (filtered to models the current auth actually has access to)
-//   2. Fetches authoritative model limits from the Copilot API
-//      (https://api.individual.githubcopilot.com/models)
+//   2. Fetches the Copilot API to cross-reference available models and get
+//      capability flags (thinking, reasoning, vision, etc.)
 //   3. Generates agents/worker-*.md and commands/worker-*.md files
-//   4. Writes per-model limit overrides to opencode.json so that OpenCode's
-//      auto-compaction can maximally utilize each model's context window
-//   5. Removes stale worker files and limit entries for models no longer available
+//   4. Removes stale worker files for models no longer available
 //
-// Limit strategy (requires the limit.input propagation fix in provider.ts):
-//   limit.context = limit.input = max_context_window_tokens
-//   limit.output  = max_output_tokens
-//   Compaction triggers at: tokenCount >= limit.input - compaction.reserved
+// Model limits are handled by OpenCode's built-in Copilot plugin (same API).
 //
 // Environment variables:
 //   OPENCODE_SKIP_WORKER_MODELS  Comma-separated model IDs to exclude
@@ -29,7 +24,6 @@ import { homedir } from "node:os";
 const CONFIG_DIR = join(homedir(), ".config", "opencode");
 const AGENTS_DIR = join(CONFIG_DIR, "agents");
 const COMMANDS_DIR = join(CONFIG_DIR, "commands");
-const CONFIG_FILE = join(CONFIG_DIR, "opencode.json");
 const PROVIDER_ID = "github-copilot";
 
 const COPILOT_API_BASE =
@@ -47,13 +41,6 @@ const SKIP_MODELS = new Set<string>(
 // Copilot API: auth & model fetching
 // ---------------------------------------------------------------------------
 
-interface CopilotLimits {
-  max_context_window_tokens: number;
-  max_prompt_tokens: number;
-  max_output_tokens: number;
-  max_non_streaming_output_tokens?: number;
-}
-
 interface CopilotSupports {
   adaptive_thinking?: boolean;
   max_thinking_budget?: number;
@@ -67,7 +54,6 @@ interface CopilotModel {
   id: string;
   name: string;
   vendor: string;
-  limits: CopilotLimits;
   supports: CopilotSupports;
   state: string;
   preview: boolean;
@@ -91,9 +77,9 @@ async function getCopilotToken(): Promise<string | null> {
 }
 
 /**
- * Fetch the authoritative model list from the Copilot API.
- * This endpoint returns per-model context/prompt/output token limits
- * and capability flags (thinking, reasoning, vision, etc.).
+ * Fetch the model list from the Copilot API.
+ * Used to cross-reference against OpenCode's provider list — models absent
+ * from this API are likely decommissioned and should not get workers.
  */
 async function fetchCopilotModels(
   token: string,
@@ -113,18 +99,11 @@ async function fetchCopilotModels(
   const result = new Map<string, CopilotModel>();
   for (const m of body.data) {
     const caps = m.capabilities ?? {};
-    const limits = caps.limits ?? {};
     const supports = caps.supports ?? {};
     result.set(m.id, {
       id: m.id,
       name: m.name ?? m.id,
       vendor: m.vendor ?? "unknown",
-      limits: {
-        max_context_window_tokens: limits.max_context_window_tokens ?? 0,
-        max_prompt_tokens: limits.max_prompt_tokens ?? 0,
-        max_output_tokens: limits.max_output_tokens ?? 0,
-        max_non_streaming_output_tokens: limits.max_non_streaming_output_tokens,
-      },
       supports: {
         adaptive_thinking: supports.adaptive_thinking,
         max_thinking_budget: supports.max_thinking_budget,
@@ -138,43 +117,6 @@ async function fetchCopilotModels(
     });
   }
   return result;
-}
-
-// ---------------------------------------------------------------------------
-// Limit calculation
-// ---------------------------------------------------------------------------
-
-/**
- * Compute optimal OpenCode limit config from Copilot API limits.
- *
- * Strategy: set context = input = max_context_window_tokens (the hard ceiling).
- * OpenCode's compaction triggers at: tokenCount >= limit.input - reserved
- * where `reserved` is config.compaction.reserved (e.g. 20000).
- *
- * This maximizes context utilization — the only buffer is `reserved`.
- */
-/**
- * Manual limit overrides — merged on top of Copilot API values.
- * Useful for "overclocking" models beyond their advertised limits.
- * Only the fields you specify are overridden; omitted fields use API values.
- */
-const LIMIT_OVERRIDES: Record<
-  string,
-  Partial<{ context: number; input: number; output: number }>
-> = {
-  // "claude-opus-4.6": { context: 200000, input: 200000 },
-};
-
-function calculateLimits(copilot: CopilotModel): {
-  context: number;
-  input: number;
-  output: number;
-} {
-  const C = copilot.limits.max_context_window_tokens;
-  const O = copilot.limits.max_output_tokens;
-  const base = { context: C, input: C, output: O };
-  const override = LIMIT_OVERRIDES[copilot.id];
-  return override ? { ...base, ...override } : base;
 }
 
 // ---------------------------------------------------------------------------
@@ -276,50 +218,6 @@ function generateCommand(model: ModelInfo): string {
 }
 
 // ---------------------------------------------------------------------------
-// Config file helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Update opencode.json with per-model limit overrides.
- *
- * - Adds/updates limit entries for all models in `modelLimits`
- * - Removes limit-only entries for models no longer in `generatedIds`
- *   (entries with other user-set fields like `headers` are preserved)
- */
-async function updateConfigFile(
-  modelLimits: Map<string, { context: number; input: number; output: number }>,
-  generatedIds: Set<string>,
-): Promise<void> {
-  const raw = await readFile(CONFIG_FILE, "utf-8");
-  const config = JSON.parse(raw);
-
-  // Ensure nested path exists
-  config.provider = config.provider ?? {};
-  config.provider[PROVIDER_ID] = config.provider[PROVIDER_ID] ?? {};
-  config.provider[PROVIDER_ID].models =
-    config.provider[PROVIDER_ID].models ?? {};
-
-  const models = config.provider[PROVIDER_ID].models as Record<string, any>;
-
-  // Update limits for all generated models
-  for (const [id, limit] of modelLimits) {
-    models[id] = { ...(models[id] ?? {}), limit };
-  }
-
-  // Clean up stale entries — only remove limit-only entries (auto-generated).
-  // Entries with other user-set fields (headers, options, etc.) are preserved.
-  for (const id of Object.keys(models)) {
-    if (generatedIds.has(id)) continue;
-    const entry = models[id];
-    if (entry && Object.keys(entry).length === 1 && entry.limit) {
-      delete models[id];
-    }
-  }
-
-  await writeFile(CONFIG_FILE, JSON.stringify(config, null, 2) + "\n", "utf-8");
-}
-
-// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -362,7 +260,7 @@ const plugin: Plugin = async ({ client }) => ({
       if (!provider)
         throw new Error(`Provider "${PROVIDER_ID}" not found or not connected`);
 
-      // ── Phase 2: Fetch Copilot API for authoritative limits ──
+      // ── Phase 2: Fetch Copilot API for model cross-referencing ──
       let copilotModels: Map<string, CopilotModel> | null = null;
       const token = await getCopilotToken();
       if (token) {
@@ -374,7 +272,7 @@ const plugin: Plugin = async ({ client }) => ({
               body: {
                 service: "worker-generator",
                 level: "warn",
-                message: `Copilot API fetch failed: ${err?.message}. Limits will not be updated.`,
+                message: `Copilot API fetch failed: ${err?.message}. Will skip model cross-referencing.`,
               },
             })
             .catch(() => {});
@@ -386,7 +284,7 @@ const plugin: Plugin = async ({ client }) => ({
               service: "worker-generator",
               level: "warn",
               message:
-                "No Copilot auth token found. Limits will not be updated.",
+                "No Copilot auth token found. Will skip model cross-referencing.",
             },
           })
           .catch(() => {});
@@ -418,17 +316,12 @@ const plugin: Plugin = async ({ client }) => ({
       await mkdir(COMMANDS_DIR, { recursive: true });
 
       const generatedIds = new Set<string>();
-      const modelLimits = new Map<
-        string,
-        { context: number; input: number; output: number }
-      >();
       let created = 0;
       let updated = 0;
       let unchanged = 0;
       let removed = 0;
-      let limitsUpdated = 0;
 
-      // ── Phase 4: Generate agents, commands & calculate limits ──
+      // ── Phase 4: Generate agents & commands ──
       for (const [id, model] of models) {
         generatedIds.add(id);
 
@@ -457,13 +350,6 @@ const plugin: Plugin = async ({ client }) => ({
               .catch(() => {});
           }
         }
-
-        // Calculate limits from Copilot API
-        const copilot = copilotModels?.get(id);
-        if (copilot && copilot.limits.max_context_window_tokens > 0) {
-          modelLimits.set(id, calculateLimits(copilot));
-          limitsUpdated++;
-        }
       }
 
       // ── Phase 5: Clean stale worker files ──
@@ -476,25 +362,6 @@ const plugin: Plugin = async ({ client }) => ({
         }
       }
 
-      // ── Phase 6: Persist limits to opencode.json ──
-      let limitsWritten = false;
-      if (modelLimits.size > 0) {
-        try {
-          await updateConfigFile(modelLimits, generatedIds);
-          limitsWritten = true;
-        } catch (err: any) {
-          await client.app
-            .log({
-              body: {
-                service: "worker-generator",
-                level: "error",
-                message: `Failed to update config limits: ${err?.message}`,
-              },
-            })
-            .catch(() => {});
-        }
-      }
-
       // ── Report ──
       const parts = [
         `${models.size} models`,
@@ -502,7 +369,6 @@ const plugin: Plugin = async ({ client }) => ({
         updated > 0 ? `${updated} updated` : null,
         removed > 0 ? `${removed} removed` : null,
         unchanged > 0 ? `${unchanged} unchanged` : null,
-        limitsWritten ? `${limitsUpdated} limits` : null,
       ].filter(Boolean);
 
       await client.tui.showToast({
