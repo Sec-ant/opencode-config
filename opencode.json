@@ -51,13 +51,6 @@
             "output": 64000
           }
         },
-        "gpt-5.1": {
-          "limit": {
-            "context": 264000,
-            "input": 264000,
-            "output": 64000
-          }
-        },
         "claude-sonnet-4.6": {
           "limit": {
             "context": 200000,
