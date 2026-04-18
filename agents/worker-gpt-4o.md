@@ -2,7 +2,6 @@
 description: Worker subagent (GPT-4o)
 mode: subagent
 model: github-copilot/gpt-4o
-temperature: 0.2
 steps: 200
 permission:
   task:

@@ -2,8 +2,7 @@
 description: Worker subagent (GPT-5-mini [high])
 mode: subagent
 model: github-copilot/gpt-5-mini
-temperature: 0.2
-steps: 100
+steps: 200
 variant: high
 permission:
   task:

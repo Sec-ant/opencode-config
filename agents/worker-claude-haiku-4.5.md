@@ -2,8 +2,7 @@
 description: Worker subagent (Claude Haiku 4.5)
 mode: subagent
 model: github-copilot/claude-haiku-4.5
-temperature: 0.2
-steps: 100
+steps: 200
 permission:
   task:
     "*": deny

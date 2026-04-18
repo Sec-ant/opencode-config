@@ -2,8 +2,7 @@
 description: Worker subagent (Gemini 3 Flash [low])
 mode: subagent
 model: github-copilot/gemini-3-flash-preview
-temperature: 0.2
-steps: 100
+steps: 200
 variant: low
 permission:
   task:

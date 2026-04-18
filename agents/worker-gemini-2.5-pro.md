@@ -2,7 +2,6 @@
 description: Worker subagent (Gemini 2.5 Pro)
 mode: subagent
 model: github-copilot/gemini-2.5-pro
-temperature: 0.2
 steps: 200
 permission:
   task:

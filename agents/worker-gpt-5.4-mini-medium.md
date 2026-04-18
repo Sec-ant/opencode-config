@@ -2,7 +2,7 @@
 description: Worker subagent (GPT-5.4 Mini [medium])
 mode: subagent
 model: github-copilot/gpt-5.4-mini
-steps: 100
+steps: 200
 variant: medium
 permission:
   task:

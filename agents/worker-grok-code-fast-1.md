@@ -2,7 +2,6 @@
 description: Worker subagent (Grok Code Fast 1)
 mode: subagent
 model: github-copilot/grok-code-fast-1
-temperature: 0.2
 steps: 200
 permission:
   task:

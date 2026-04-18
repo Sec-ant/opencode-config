@@ -2,7 +2,6 @@
 description: Worker subagent (Claude Opus 4.6 [high])
 mode: subagent
 model: github-copilot/claude-opus-4.6
-temperature: 0.2
 steps: 200
 variant: high
 permission:

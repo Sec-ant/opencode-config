@@ -2,7 +2,6 @@
 description: Worker subagent (Gemini 3.1 Pro Preview [low])
 mode: subagent
 model: github-copilot/gemini-3.1-pro-preview
-temperature: 0.2
 steps: 200
 variant: low
 permission:

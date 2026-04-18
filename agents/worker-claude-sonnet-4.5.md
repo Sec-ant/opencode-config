@@ -2,7 +2,6 @@
 description: Worker subagent (Claude Sonnet 4.5)
 mode: subagent
 model: github-copilot/claude-sonnet-4.5
-temperature: 0.2
 steps: 200
 permission:
   task:
