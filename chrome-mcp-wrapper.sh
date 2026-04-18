@@ -54,7 +54,8 @@ elif [[ "$OS" == "Linux" ]]; then
       | grep ":${CHROME_PORT}.*LISTENING" \
       | awk '{print $NF}' \
       | head -1 \
-      | tr -d '\r'
+      | tr -d '\r' \
+      || true
   }
 
   kill_win_pid() {
