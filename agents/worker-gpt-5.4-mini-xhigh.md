@@ -7,7 +7,7 @@ variant: xhigh
 permission:
   task:
     "*": deny
-    "worker-gpt-5.4-mini-*": allow
+    "worker-gpt-5.4-mini*": allow
     explore: allow
   question: allow
   read: allow

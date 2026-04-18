@@ -6,7 +6,7 @@ steps: 200
 permission:
   task:
     "*": deny
-    "worker-claude-sonnet-4": allow
+    "worker-claude-sonnet-4*": allow
     explore: allow
   question: allow
   read: allow

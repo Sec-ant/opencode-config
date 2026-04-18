@@ -6,7 +6,7 @@ steps: 200
 permission:
   task:
     "*": deny
-    "worker-gpt-4.1": allow
+    "worker-gpt-4.1*": allow
     explore: allow
   question: allow
   read: allow

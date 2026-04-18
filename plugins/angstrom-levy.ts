@@ -3,9 +3,12 @@
 //
 // Five responsibilities, all stateless (driven by conversation history):
 //
-//   1. Context continuity — when shelby calls a worker subagent without an
-//      explicit task_id, scan history for the most recent completed (or
-//      errored) task call to ANY worker-* subagent and inject its task_id.
+//   1. Worker-aware continuity — when shelby calls a worker subagent without
+//      an explicit task_id, inspect the latest user message. If it starts with
+//      /worker-<name>, force routing to that worker and resume that worker's
+//      most recent session when available. Otherwise, route to the worker used
+//      by the most recent worker task in this shelby session and inject its
+//      task_id.
 //
 //   2. Prompt passthrough — override the task tool's `prompt` parameter
 //      with the user's verbatim message (stripping any /worker-* prefix).
@@ -33,7 +36,9 @@ import type { Plugin } from "@opencode-ai/plugin";
 
 const WORKER_PREFIX = "worker-";
 const WORKER_TYPE_REGEX = new RegExp(`^${WORKER_PREFIX}`);
-const WORKER_CMD_REGEX = new RegExp(`^\\s*/${WORKER_PREFIX}\\S+\\s*`);
+const WORKER_CMD_REGEX = new RegExp(
+  `^\\s*/(${WORKER_PREFIX}\\S+)(?:\\s+|$)`,
+);
 
 // Synthetic text parts longer than this threshold are truncated in shelby's
 // context. File-read headers ("Called the Read tool ...") are typically ~100
@@ -55,6 +60,11 @@ interface TaskParameters {
   task_id?: string;
   command?: string;
   attachments?: string[];
+}
+
+interface WorkerTaskSession {
+  subagentType: string;
+  sessionId: string;
 }
 
 const angstromLevy: Plugin = async ({ client }) => {
@@ -134,17 +144,14 @@ const angstromLevy: Plugin = async ({ client }) => {
       // Only intervene if task_id is not already provided
       if (taskId) return;
 
-      // Only intervene for worker-* subagents
-      if (!subagentType?.match(WORKER_TYPE_REGEX)) return;
-
       const { data } = await client.session.messages({
         path: { id: sessionID },
       });
       if (!data) return;
 
       // Guard: only intervene for shelby sessions.
-      // Also capture the user's verbatim text and media part IDs for
-      // prompt passthrough (2) and attachment forwarding (5).
+      // Also capture the user's verbatim text and media part IDs for prompt
+      // passthrough (2), worker selection (1), and attachment forwarding (5).
       let isShelby = false;
       let userPrompt: string | undefined;
       const mediaPartIds: string[] = [];
@@ -168,27 +175,46 @@ const angstromLevy: Plugin = async ({ client }) => {
       if (!isShelby) return;
 
       // ── 1. Context continuity ───────────────────────────────────────────
-      // Scan history for the last completed/errored worker task session
-      let lastSessionId: string | undefined;
+      // Scan history for the last completed/errored worker task session.
+      // task_id always resumes the most recent session (cross-worker continuity).
+      // subagent_type inherits from that session when no explicit prefix given.
+      let lastWorkerSession: WorkerTaskSession | undefined;
       for (const { parts } of data) {
         for (const part of parts) {
-          if (
-            part.type === "tool" &&
-            part.tool === "task" &&
-            (part.state?.status === "completed" ||
-              part.state?.status === "error") &&
-            (part.state.input?.subagent_type as string | undefined)?.match(
-              WORKER_TYPE_REGEX,
-            ) &&
-            part.state.metadata?.sessionId
-          ) {
-            lastSessionId = part.state.metadata.sessionId as string;
+          if (part.type !== "tool" || part.tool !== "task") continue;
+          const { state } = part;
+          if (state?.status !== "completed" && state?.status !== "error")
+            continue;
+
+          const workerType = state.input?.subagent_type as
+            | string
+            | undefined;
+          const workerSessionId = state.metadata?.sessionId as
+            | string
+            | undefined;
+
+          if (workerType?.match(WORKER_TYPE_REGEX) && workerSessionId) {
+            lastWorkerSession = {
+              subagentType: workerType,
+              sessionId: workerSessionId,
+            };
           }
         }
       }
 
-      if (lastSessionId) {
-        output.args.task_id = lastSessionId;
+      const explicitWorker = userPrompt?.match(WORKER_CMD_REGEX)?.[1];
+      const routedWorker =
+        explicitWorker ?? lastWorkerSession?.subagentType ?? subagentType;
+
+      // Only intervene for worker-* subagents
+      if (!routedWorker?.match(WORKER_TYPE_REGEX)) return;
+
+      output.args.subagent_type = routedWorker;
+
+      // Always resume the most recent worker session, regardless of worker
+      // type. This preserves context continuity even when switching workers.
+      if (lastWorkerSession) {
+        output.args.task_id = lastWorkerSession.sessionId;
       }
 
       // ── 2. Prompt passthrough ───────────────────────────────────────────
@@ -206,7 +232,7 @@ const angstromLevy: Plugin = async ({ client }) => {
       // Auto-inject media part IDs so the task tool forwards them to the
       // worker. Since the transform hook stripped media from the LLM-facing
       // messages, shelby's LLM won't include attachment IDs itself.
-      if (mediaPartIds.length > 0 && !output.args.attachments?.length) {
+      if (mediaPartIds.length > 0) {
         output.args.attachments = mediaPartIds;
       }
     },

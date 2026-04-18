@@ -6,7 +6,7 @@ steps: 200
 permission:
   task:
     "*": deny
-    "worker-grok-code-fast-1": allow
+    "worker-grok-code-fast-1*": allow
     explore: allow
   question: allow
   read: allow

@@ -7,7 +7,7 @@ variant: high
 permission:
   task:
     "*": deny
-    "worker-claude-sonnet-4.6-*": allow
+    "worker-claude-sonnet-4.6*": allow
     explore: allow
   question: allow
   read: allow

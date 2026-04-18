@@ -6,7 +6,7 @@ steps: 200
 permission:
   task:
     "*": deny
-    "worker-claude-haiku-4.5": allow
+    "worker-claude-haiku-4.5*": allow
     explore: allow
   question: allow
   read: allow

@@ -6,7 +6,7 @@ steps: 200
 permission:
   task:
     "*": deny
-    "worker-gemini-2.5-pro": allow
+    "worker-gemini-2.5-pro*": allow
     explore: allow
   question: allow
   read: allow

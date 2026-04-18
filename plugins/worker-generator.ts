@@ -153,18 +153,12 @@ function generateAgent(model: ModelInfo, variant?: string): string {
 
   if (variant !== undefined) lines.push(`variant: ${variant}`);
 
-  // Variant workers can spawn any variant of the same model.
-  // Non-reasoning workers can only spawn themselves.
-  const taskSelfPermission =
-    model.variants.length > 0
-      ? `"worker-${model.id}-*"`
-      : `"worker-${model.id}"`;
-
+  // Workers of the same model can spawn each other (base + all variants).
   lines.push(
     "permission:",
     "  task:",
     '    "*": deny',
-    `    ${taskSelfPermission}: allow`,
+    `    "worker-${model.id}*": allow`,
     "    explore: allow",
     "  question: allow",
     "  read: allow",
@@ -316,33 +310,30 @@ const plugin: Plugin = async ({ client }) => ({
 
       // ── Phase 4: Generate agents & commands ──
       for (const [id, model] of models) {
-        if (model.variants.length > 0) {
-          // Reasoning model → one worker per variant, no base.
-          for (const variant of model.variants) {
-            const name = `${id}-${variant}`;
-            generatedAgents.add(name);
-            generatedCommands.add(name);
+        // Every model gets a base worker without variant.
+        generatedAgents.add(id);
+        generatedCommands.add(id);
+        await writeWorker(AGENTS_DIR, id, generateAgent(model));
+        await writeWorker(
+          COMMANDS_DIR,
+          id,
+          generateCommand(model.name, `worker-${id}`),
+        );
 
-            await writeWorker(AGENTS_DIR, name, generateAgent(model, variant));
-            await writeWorker(
-              COMMANDS_DIR,
-              name,
-              generateCommand(
-                `${model.name} [${variant}]`,
-                `worker-${id}-${variant}`,
-              ),
-            );
-          }
-        } else {
-          // Non-reasoning model → single worker, no variant suffix.
-          generatedAgents.add(id);
-          generatedCommands.add(id);
+        // Reasoning models also get one worker per API variant.
+        for (const variant of model.variants) {
+          const name = `${id}-${variant}`;
+          generatedAgents.add(name);
+          generatedCommands.add(name);
 
-          await writeWorker(AGENTS_DIR, id, generateAgent(model));
+          await writeWorker(AGENTS_DIR, name, generateAgent(model, variant));
           await writeWorker(
             COMMANDS_DIR,
-            id,
-            generateCommand(model.name, `worker-${id}`),
+            name,
+            generateCommand(
+              `${model.name} [${variant}]`,
+              `worker-${id}-${variant}`,
+            ),
           );
         }
       }

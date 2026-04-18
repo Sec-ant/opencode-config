@@ -7,7 +7,7 @@ variant: low
 permission:
   task:
     "*": deny
-    "worker-gemini-3.1-pro-preview-*": allow
+    "worker-gemini-3.1-pro-preview*": allow
     explore: allow
   question: allow
   read: allow
