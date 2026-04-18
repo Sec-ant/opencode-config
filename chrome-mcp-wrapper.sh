@@ -65,46 +65,41 @@ elif [[ "$OS" == "Linux" ]]; then
     fi
   }
 
-  WIN_CHROME_PID=""
-  CHROME_PID=""
+  # Chrome is intentionally NOT killed on exit. Headless Chrome idles cheaply,
+  # and keeping it alive lets multiple OpenCode instances share it safely.
+  # Stale detection on next startup handles the cleanup instead.
 
-  cleanup() {
-    if [[ -n "$WIN_CHROME_PID" ]]; then
-      kill_win_pid "$WIN_CHROME_PID"
+  # Check if Chrome is already running on the debug port
+  existing_pid=$(get_win_pid_on_port)
+  if [[ -n "$existing_pid" && "$existing_pid" != "0" ]]; then
+    # Verify it's actually responding to CDP
+    if curl -s "http://127.0.0.1:${CHROME_PORT}/json/version" >/dev/null 2>&1; then
+      echo "Reusing existing Chrome on port ${CHROME_PORT} (PID $existing_pid)" >&2
+    else
+      # Port occupied but not responding — stale process, kill and relaunch
+      kill_win_pid "$existing_pid"
+      sleep 1
+      existing_pid=""
     fi
-    if [[ -n "$CHROME_PID" ]]; then
-      kill "$CHROME_PID" 2>/dev/null || true
-      wait "$CHROME_PID" 2>/dev/null || true
-    fi
-  }
-  trap cleanup EXIT INT TERM
-
-  # Kill leftover Chrome from a previous crashed session
-  stale_pid=$(get_win_pid_on_port)
-  if [[ -n "$stale_pid" && "$stale_pid" != "0" ]]; then
-    kill_win_pid "$stale_pid"
-    sleep 1
   fi
 
-  "$CHROME_EXE" \
-    --headless=new \
-    --no-first-run \
-    --no-sandbox \
-    --user-data-dir="$USER_DATA_DIR" \
-    ${UBLOCK_EXT:+--disable-extensions-except="$UBLOCK_EXT"} \
-    ${UBLOCK_EXT:+--load-extension="$UBLOCK_EXT"} \
-    --remote-debugging-port="$CHROME_PORT" \
-    >/dev/null 2>&1 &
-  CHROME_PID=$!
-
-  for _ in $(seq 1 60); do
-    if curl -s "http://127.0.0.1:${CHROME_PORT}/json/version" >/dev/null 2>&1; then
-      break
-    fi
-    sleep 0.5
-  done
-
-  WIN_CHROME_PID=$(get_win_pid_on_port)
+  if [[ -z "$existing_pid" || "$existing_pid" == "0" ]]; then
+    "$CHROME_EXE" \
+      --headless=new \
+      --no-first-run \
+      --no-sandbox \
+      --user-data-dir="$USER_DATA_DIR" \
+      ${UBLOCK_EXT:+--disable-extensions-except="$UBLOCK_EXT"} \
+      ${UBLOCK_EXT:+--load-extension="$UBLOCK_EXT"} \
+      --remote-debugging-port="$CHROME_PORT" \
+      >/dev/null 2>&1 &
+    for _ in $(seq 1 60); do
+      if curl -s "http://127.0.0.1:${CHROME_PORT}/json/version" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 0.5
+    done
+  fi
 
   # Restore stdin for MCP stdio transport
   exec 0<&3 3<&-
