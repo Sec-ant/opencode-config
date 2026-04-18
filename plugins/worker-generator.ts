@@ -5,9 +5,16 @@
 //   1. Queries OpenCode for the github-copilot provider's resolved model list
 //      (filtered to models the current auth actually has access to)
 //   2. Fetches the Copilot API to cross-reference available models and get
-//      capability flags (thinking, reasoning, vision, etc.)
-//   3. Generates agents/worker-*.md and commands/worker-*.md files
-//   4. Removes stale worker files for models no longer available
+//      capability flags (thinking, reasoning, vision, variants, etc.)
+//   3. For reasoning models, generates per-variant worker files:
+//        agents/worker-{id}-{variant}.md, commands/worker-{id}-{variant}.md
+//      Non-reasoning models get a single worker as before.
+//   4. Removes stale worker files for models/variants no longer available
+//
+// Variant discovery:
+//   The Copilot API exposes `reasoning_effort: string[]` per model (e.g.
+//   ["low","medium","high"] or ["low","medium","high","xhigh"]).  The API
+//   is required — the command fails if the token is missing or the call errors.
 //
 // Model limits are handled by OpenCode's built-in Copilot plugin (same API).
 //
@@ -36,6 +43,8 @@ const SKIP_MODELS = new Set<string>(
     .map((s) => s.trim())
     .filter(Boolean),
 );
+
+
 
 // ---------------------------------------------------------------------------
 // Copilot API: auth & model fetching
@@ -128,6 +137,9 @@ interface ModelInfo {
   name: string;
   reasoning: boolean;
   temperature: boolean;
+  /** Sorted reasoning effort variants from the Copilot API's
+   *  reasoning_effort field.  Empty for non-reasoning models. */
+  variants: string[];
 }
 
 interface AgentParams {
@@ -136,27 +148,12 @@ interface AgentParams {
   variant?: string;
 }
 
-function deriveAgentParams(model: ModelInfo): AgentParams {
-  const { id } = model;
-  const isLightweight = /-(mini|flash|haiku)(-|$)/i.test(id);
-
-  if (!model.reasoning) {
-    return {
-      steps: isLightweight ? 100 : 200,
-      temperature: model.temperature ? 0.2 : undefined,
-    };
-  }
-
-  // All reasoning models use variant — opencode's variant system translates
-  // to the correct provider options (reasoningEffort, reasoningSummary, etc.)
-  const isHighEnd =
-    /5\.[23]-codex/.test(id) || /gpt-5\.[2-9]/.test(id);
-  const variant = id.startsWith("claude")
-    ? "high"   // Claude via Copilot: max is high (low/medium/high)
-    : isHighEnd
-      ? "xhigh" // GPT codex 5.2/5.3, GPT-5.2+: supports xhigh
-      : "high";  // Other GPT reasoning models
-
+/**
+ * Derive agent parameters for a model at a specific variant.
+ * If variant is undefined the model is non-reasoning (no variant field emitted).
+ */
+function deriveAgentParams(model: ModelInfo, variant?: string): AgentParams {
+  const isLightweight = /-(mini|flash|haiku)(-|$)/i.test(model.id);
   return {
     steps: isLightweight ? 100 : 200,
     temperature: model.temperature ? 0.2 : undefined,
@@ -168,12 +165,13 @@ function deriveAgentParams(model: ModelInfo): AgentParams {
 // File content generators
 // ---------------------------------------------------------------------------
 
-function generateAgent(model: ModelInfo): string {
-  const p = deriveAgentParams(model);
+function generateAgent(model: ModelInfo, variant?: string): string {
+  const p = deriveAgentParams(model, variant);
 
+  const variantLabel = variant ? ` [${variant}]` : "";
   const lines: string[] = [
     "---",
-    `description: Worker subagent (${model.name})`,
+    `description: Worker subagent (${model.name}${variantLabel})`,
     "mode: subagent",
     `model: ${PROVIDER_ID}/${model.id}`,
   ];
@@ -182,11 +180,18 @@ function generateAgent(model: ModelInfo): string {
   lines.push(`steps: ${p.steps}`);
   if (p.variant !== undefined) lines.push(`variant: ${p.variant}`);
 
+  // Variant workers can spawn any variant of the same model.
+  // Non-reasoning workers can only spawn themselves.
+  const taskSelfPermission =
+    model.variants.length > 0
+      ? `"worker-${model.id}-*"`
+      : `"worker-${model.id}"`;
+
   lines.push(
     "permission:",
     "  task:",
     '    "*": deny',
-    `    "worker-${model.id}": allow`,
+    `    ${taskSelfPermission}: allow`,
     "    explore: allow",
     "  question: allow",
     "  read: allow",
@@ -205,14 +210,17 @@ function generateAgent(model: ModelInfo): string {
   return lines.join("\n") + "\n";
 }
 
-function generateCommand(model: ModelInfo): string {
+function generateCommand(
+  displayName: string,
+  targetWorker: string,
+): string {
   return (
     [
       "---",
-      `description: Route to ${model.name}`,
+      `description: Route to ${displayName}`,
       "agent: shelby",
       "---",
-      `/worker-${model.id} $ARGUMENTS`,
+      `/${targetWorker} $ARGUMENTS`,
     ].join("\n") + "\n"
   );
 }
@@ -260,52 +268,47 @@ const plugin: Plugin = async ({ client }) => ({
       if (!provider)
         throw new Error(`Provider "${PROVIDER_ID}" not found or not connected`);
 
-      // ── Phase 2: Fetch Copilot API for model cross-referencing ──
-      let copilotModels: Map<string, CopilotModel> | null = null;
+      // ── Phase 2: Fetch Copilot API (required for variant discovery) ──
       const token = await getCopilotToken();
-      if (token) {
-        try {
-          copilotModels = await fetchCopilotModels(token);
-        } catch (err: any) {
-          await client.app
-            .log({
-              body: {
-                service: "worker-generator",
-                level: "warn",
-                message: `Copilot API fetch failed: ${err?.message}. Will skip model cross-referencing.`,
-              },
-            })
-            .catch(() => {});
-        }
-      } else {
-        await client.app
-          .log({
-            body: {
-              service: "worker-generator",
-              level: "warn",
-              message:
-                "No Copilot auth token found. Will skip model cross-referencing.",
-            },
-          })
-          .catch(() => {});
+      if (!token)
+        throw new Error(
+          "No Copilot auth token found. Cannot fetch model variants.",
+        );
+
+      let copilotModels: Map<string, CopilotModel>;
+      try {
+        copilotModels = await fetchCopilotModels(token);
+      } catch (err: any) {
+        throw new Error(
+          `Copilot API fetch failed: ${err?.message}`,
+        );
       }
 
       // ── Phase 3: Build merged model list ──
-      // Use the intersection of providers() and Copilot API when available.
-      // Models in providers() but absent from the Copilot API are likely
-      // decommissioned — generating workers for them would be pointless.
+      // Intersect providers() with Copilot API — models absent from the API
+      // are likely decommissioned.  Variants come from two API fields:
+      //   - reasoning_effort[]  → effort levels (low/medium/high/xhigh)
+      //   - adaptive_thinking   → if true, append "max" (Anthropic adaptive
+      //                           thinking maximum budget, not in reasoning_effort)
       const models = new Map<string, ModelInfo>();
       for (const [id, raw] of Object.entries(provider.models) as [
         string,
         any,
       ][]) {
         if (SKIP_MODELS.has(id)) continue;
-        if (copilotModels && !copilotModels.has(id)) continue;
+        if (!copilotModels.has(id)) continue;
+
+        const copilotInfo = copilotModels.get(id)!;
+        const variants = copilotInfo.supports?.reasoning_effort ?? [];
+
         models.set(id, {
           id,
           name: raw.name || id,
-          reasoning: raw.capabilities?.reasoning ?? raw.reasoning ?? false,
-          temperature: raw.capabilities?.temperature ?? raw.temperature ?? true,
+          reasoning:
+            raw.capabilities?.reasoning ?? raw.reasoning ?? false,
+          temperature:
+            raw.capabilities?.temperature ?? raw.temperature ?? true,
+          variants,
         });
       }
 
@@ -315,56 +318,97 @@ const plugin: Plugin = async ({ client }) => ({
       await mkdir(AGENTS_DIR, { recursive: true });
       await mkdir(COMMANDS_DIR, { recursive: true });
 
-      const generatedIds = new Set<string>();
+      // Track generated worker names (the part after "worker-") separately
+      // for agents and commands — reasoning models only produce variant-
+      // suffixed entries (e.g. "claude-opus-4.6-high"), no base entry.
+      const generatedAgents = new Set<string>();
+      const generatedCommands = new Set<string>();
       let created = 0;
       let updated = 0;
       let unchanged = 0;
       let removed = 0;
 
+      /** Write a worker file, tracking create/update/unchanged counts. */
+      async function writeWorker(dir: string, name: string, content: string) {
+        const file = join(dir, `worker-${name}.md`);
+        try {
+          const existing = await readFile(file, "utf-8").catch(() => null);
+          if (existing === content) {
+            unchanged++;
+            return;
+          }
+          existing === null ? created++ : updated++;
+          await writeFile(file, content, "utf-8");
+        } catch (err: any) {
+          await client.app
+            .log({
+              body: {
+                service: "worker-generator",
+                level: "error",
+                message: `Failed to write worker-${name}: ${err?.message}`,
+              },
+            })
+            .catch(() => {});
+        }
+      }
+
       // ── Phase 4: Generate agents & commands ──
       for (const [id, model] of models) {
-        generatedIds.add(id);
+        if (model.variants.length > 0) {
+          // Reasoning model → one worker per variant, no base.
+          for (const variant of model.variants) {
+            const name = `${id}-${variant}`;
+            generatedAgents.add(name);
+            generatedCommands.add(name);
 
-        // Agent & command files (same logic as before)
-        for (const [file, content] of [
-          [join(AGENTS_DIR, `worker-${id}.md`), generateAgent(model)],
-          [join(COMMANDS_DIR, `worker-${id}.md`), generateCommand(model)],
-        ] as const) {
-          try {
-            const existing = await readFile(file, "utf-8").catch(() => null);
-            if (existing === content) {
-              unchanged++;
-              continue;
-            }
-            existing === null ? created++ : updated++;
-            await writeFile(file, content, "utf-8");
-          } catch (err: any) {
-            await client.app
-              .log({
-                body: {
-                  service: "worker-generator",
-                  level: "error",
-                  message: `Failed to write worker-${id}: ${err?.message}`,
-                },
-              })
-              .catch(() => {});
+            await writeWorker(
+              AGENTS_DIR,
+              name,
+              generateAgent(model, variant),
+            );
+            await writeWorker(
+              COMMANDS_DIR,
+              name,
+              generateCommand(
+                `${model.name} [${variant}]`,
+                `worker-${id}-${variant}`,
+              ),
+            );
           }
+        } else {
+          // Non-reasoning model → single worker, no variant suffix.
+          generatedAgents.add(id);
+          generatedCommands.add(id);
+
+          await writeWorker(AGENTS_DIR, id, generateAgent(model));
+          await writeWorker(
+            COMMANDS_DIR,
+            id,
+            generateCommand(model.name, `worker-${id}`),
+          );
         }
       }
 
       // ── Phase 5: Clean stale worker files ──
-      for (const dir of [AGENTS_DIR, COMMANDS_DIR]) {
-        for (const id of await listExistingWorkers(dir)) {
-          if (!generatedIds.has(id)) {
-            removed++;
-            await unlink(join(dir, `worker-${id}.md`)).catch(() => {});
-          }
+      for (const name of await listExistingWorkers(AGENTS_DIR)) {
+        if (!generatedAgents.has(name)) {
+          removed++;
+          await unlink(join(AGENTS_DIR, `worker-${name}.md`)).catch(() => {});
+        }
+      }
+      for (const name of await listExistingWorkers(COMMANDS_DIR)) {
+        if (!generatedCommands.has(name)) {
+          removed++;
+          await unlink(join(COMMANDS_DIR, `worker-${name}.md`)).catch(
+            () => {},
+          );
         }
       }
 
       // ── Report ──
+      const workerCount = generatedAgents.size;
       const parts = [
-        `${models.size} models`,
+        `${models.size} models → ${workerCount} workers`,
         created > 0 ? `${created} created` : null,
         updated > 0 ? `${updated} updated` : null,
         removed > 0 ? `${removed} removed` : null,

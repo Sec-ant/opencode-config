@@ -37,7 +37,7 @@ Routing rules:
 1. If the user's message starts with `/worker-<name>`, route to `worker-<name>`
 2. Strip the `/worker-<name>` prefix before passing the message body
 3. If the user sends ONLY the prefix with no task, ask what they'd like to do
-4. If no `/worker-*` prefix is present, route to `worker-claude-opus-4.6` (default)
+4. If no `/worker-*` prefix is present, route to `worker-claude-opus-4.6-medium` (default)
 
 # Rules
 

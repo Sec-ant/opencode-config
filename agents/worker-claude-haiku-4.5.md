@@ -4,7 +4,6 @@ mode: subagent
 model: github-copilot/claude-haiku-4.5
 temperature: 0.2
 steps: 100
-variant: high
 permission:
   task:
     "*": deny
