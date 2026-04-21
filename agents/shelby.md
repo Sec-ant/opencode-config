@@ -39,7 +39,7 @@ Routing rules:
 2. Strip the `/worker-<name>` prefix before passing the message body
 3. If the user sends ONLY the prefix with no task, ask what they'd like to do
 4. If no `/worker-*` prefix is present, continue with the same worker as the most recent worker task in this session when available
-5. If there is no prior worker task in this session, route to `worker-claude-opus-4.6-medium` (default fallback)
+5. If there is no prior worker task in this session, route to `worker-claude-opus-4.7-medium` (default fallback)
 
 # Rules
 

@@ -32,7 +32,8 @@
       "type": "local",
       "command": [
         "bash",
-        "./chrome-mcp-wrapper.sh"
+        "-c",
+        "$HOME/.config/opencode/chrome-mcp-wrapper.sh"
       ]
     }
   },

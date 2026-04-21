@@ -1,13 +1,13 @@
 ---
-description: Worker subagent (Claude Opus 4.6 [high])
+description: Worker subagent (Claude Opus 4.7 [medium])
 mode: subagent
-model: github-copilot/claude-opus-4.6
+model: github-copilot/claude-opus-4.7
 steps: 200
-variant: high
+variant: medium
 permission:
   task:
     "*": deny
-    "worker-claude-opus-4.6*": allow
+    "worker-claude-opus-4.7*": allow
     explore: allow
   question: allow
   read: allow
